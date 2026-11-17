@@ -1,0 +1,12 @@
+google-genai>=1.0.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+ddgs>=9.0.0
+psutil>=5.9.0
+mss>=9.0.0
+
+# Windows-only volume and brightness control (skipped automatically elsewhere)
+pycaw; sys_platform == "win32"
+comtypes; sys_platform == "win32"
+screen-brightness-control; sys_platform == "win32"

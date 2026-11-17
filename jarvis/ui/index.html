@@ -1,0 +1,614 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Jarvis Console</title>
+<style>
+  /* Layout: a command-room console. Left rail = weather, machine vitals, music and controls.
+     Centre = notebook. Right = a console that talks to Jarvis. Phones get three tabs. */
+  :root {
+    --bg: #04070c;
+    --panel: #09121b;
+    --panel-hi: #0d1a27;
+    --line: rgba(86, 214, 255, .17);
+    --line-hi: rgba(86, 214, 255, .42);
+    --cyan: #4fd8ff;
+    --amber: #ffb347;
+    --text: #d8eaf3;
+    --dim: #7e98a6;
+    --ok: #4be3a0;
+    --bad: #ff6477;
+    --mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, Menlo, monospace;
+    --sans: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 var(--sans);
+    display: flex; flex-direction: column; overflow: hidden;
+    background-image:
+      radial-gradient(1100px 520px at 78% -12%, rgba(79,216,255,.11), transparent 62%),
+      radial-gradient(800px 460px at -8% 108%, rgba(255,179,71,.07), transparent 60%),
+      linear-gradient(rgba(79,216,255,.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(79,216,255,.035) 1px, transparent 1px);
+    background-size: auto, auto, 44px 44px, 44px 44px;
+  }
+  button, input, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+  /* ---------- header ---------- */
+  header {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding-block: 10px; padding-left: max(18px, env(safe-area-inset-left, 0px)); padding-right: max(18px, env(safe-area-inset-right, 0px));
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(to bottom, rgba(79,216,255,.07), transparent);
+  }
+  .reactor { width: 38px; height: 38px; flex: none; filter: drop-shadow(0 0 8px rgba(79,216,255,.45)); }
+  .reactor circle { fill: none; transform-origin: 20px 20px; }
+  .r1 { stroke: var(--cyan); stroke-width: 1.4; stroke-dasharray: 7 4; animation: spin 16s linear infinite; }
+  .r2 { stroke: var(--amber); stroke-width: 1.2; stroke-dasharray: 2 3.5; animation: spin 9s linear infinite reverse; }
+  .core { fill: var(--cyan) !important; animation: beat 2.8s ease-in-out infinite; transform-origin: 20px 20px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes beat { 50% { opacity: .45; transform: scale(.8); } }
+  .word { font: 700 17px var(--mono); letter-spacing: .34em; color: var(--cyan); text-shadow: 0 0 16px rgba(79,216,255,.5); }
+  .chip { font: 11px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--dim);
+          border: 1px solid var(--line); border-radius: 999px; padding: 3px 11px; display: inline-flex; align-items: center; gap: 7px; }
+  .led { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .led.off { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+  .grow { flex: 1; }
+  .clock { text-align: right; line-height: 1.15; }
+  .clock b { display: block; font: 600 18px var(--mono); color: var(--amber); letter-spacing: .06em; font-variant-numeric: tabular-nums; }
+  .clock span { font: 11px var(--mono); color: var(--dim); letter-spacing: .08em; text-transform: uppercase; }
+
+  /* ---------- layout ---------- */
+  .tabs { display: none; }
+  main {
+    flex: 1; min-height: 0; display: grid; gap: 14px;
+    grid-template-columns: 344px minmax(0, 1.35fr) minmax(320px, 1fr);
+    padding-block: 14px; padding-left: max(14px, env(safe-area-inset-left, 0px)); padding-right: max(14px, env(safe-area-inset-right, 0px));
+  }
+  #col-left { display: flex; flex-direction: column; gap: 14px; min-height: 0; overflow: auto; padding-right: 2px; scrollbar-width: thin; scrollbar-color: var(--line-hi) transparent; }
+  #col-left > .panel { flex: none; }   /* panels keep their natural height; the rail scrolls on short screens */
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; position: relative; display: flex; flex-direction: column; min-height: 0; }
+  .panel::before, .panel::after { content: ""; position: absolute; width: 13px; height: 13px; pointer-events: none; }
+  .panel::before { left: -1px; top: -1px; border-left: 2px solid var(--cyan); border-top: 2px solid var(--cyan); border-top-left-radius: 8px; }
+  .panel::after { right: -1px; bottom: -1px; border-right: 2px solid var(--amber); border-bottom: 2px solid var(--amber); border-bottom-right-radius: 8px; }
+  .panel > h2 { margin: 0; padding: 10px 14px; font: 600 11px var(--mono); letter-spacing: .24em; color: var(--cyan);
+                border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 10px; text-transform: uppercase; flex: none; }
+  .panel > h2 small { font: 11px var(--mono); letter-spacing: .08em; color: var(--dim); text-transform: none; }
+  .body { padding: 14px; min-height: 0; overflow: auto; }
+  .flex1 { flex: 1; }
+
+  input, textarea { background: var(--panel-hi); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; width: 100%; min-width: 0; }
+  input::placeholder, textarea::placeholder { color: var(--dim); }
+  .btn { background: transparent; border: 1px solid var(--line); border-radius: 6px; padding: 7px 12px; white-space: nowrap; transition: border-color .15s, color .15s, background .15s; }
+  .btn:hover { border-color: var(--cyan); color: var(--cyan); }
+  .btn.primary { background: rgba(79,216,255,.13); border-color: var(--line-hi); color: var(--cyan); }
+  .btn.primary:hover { background: rgba(79,216,255,.22); }
+  .btn.danger:hover, .btn.danger.armed { border-color: var(--bad); color: var(--bad); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .hint { color: var(--dim); font-size: 13px; margin: 0; }
+  .err { color: var(--bad); font-size: 13px; margin: 0; }
+
+  /* ---------- weather ---------- */
+  .wx-form { display: flex; gap: 8px; margin-bottom: 12px; }
+  .wx-main { display: flex; align-items: center; gap: 14px; }
+  .wx-icon { width: 58px; height: 58px; flex: none; }
+  .i-sun { fill: var(--amber); } .i-ray { stroke: var(--amber); stroke-width: 2.4; stroke-linecap: round; }
+  .i-cloud { fill: #3b556a; } .i-cloud.light { fill: #8fb0c4; }
+  .i-drop { stroke: var(--cyan); stroke-width: 2.6; stroke-linecap: round; } .i-bolt { fill: var(--amber); } .i-snow { fill: #e8f6ff; }
+  .wx-temp { font: 300 50px/1 var(--sans); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .wx-temp small { font-size: 20px; color: var(--dim); margin-left: 2px; }
+  .wx-sum { color: var(--amber); text-transform: capitalize; }
+  .wx-place { color: var(--dim); font-size: 12.5px; }
+  .wx-meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0 6px; }
+  .wx-meta div { font: 10px var(--mono); letter-spacing: .12em; color: var(--dim); text-transform: uppercase; }
+  .wx-meta b { display: block; font: 600 15px var(--mono); color: var(--text); letter-spacing: 0; text-transform: none; font-variant-numeric: tabular-nums; }
+  .days { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; border-top: 1px solid var(--line); padding-top: 10px; }
+  .day { min-width: 0; font-size: 12px; line-height: 1.35; }
+  .day b { display: block; font: 600 11px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--cyan); }
+  .day span { display: block; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .day i { display: block; font: normal 12px var(--mono); color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  /* ---------- vitals ---------- */
+  .gauges { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; }
+  .ring { --p: 0; --c: var(--cyan); width: 64px; height: 64px; margin: 0 auto 6px; border-radius: 50%; position: relative; display: grid; place-items: center;
+          background: conic-gradient(var(--c) calc(var(--p) * 1%), rgba(255,255,255,.08) 0); }
+  .ring::before { content: ""; position: absolute; inset: 7px; border-radius: 50%; background: var(--panel); }
+  .ring b { position: relative; font: 600 15px var(--mono); font-variant-numeric: tabular-nums; }
+  .gauge span { font: 10px var(--mono); letter-spacing: .16em; color: var(--dim); text-transform: uppercase; }
+  .gauge em { display: block; font: normal 11px var(--mono); color: var(--dim); min-height: 1.2em; }
+
+  /* ---------- music & controls ---------- */
+  .row { display: flex; gap: 8px; align-items: center; }
+  .music-in { margin-bottom: 10px; }
+  .transport { display: flex; gap: 8px; justify-content: center; margin-bottom: 14px; }
+  .transport .btn { width: 44px; height: 38px; padding: 0; display: grid; place-items: center; }
+  .transport .btn.main { width: 56px; border-color: var(--line-hi); color: var(--cyan); background: rgba(79,216,255,.1); }
+  .transport svg { width: 18px; height: 18px; fill: currentColor; }
+  .slider { display: grid; grid-template-columns: 74px 1fr 40px; align-items: center; gap: 10px; margin-bottom: 10px; font: 11px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+  .slider output { text-align: right; color: var(--text); letter-spacing: 0; font-variant-numeric: tabular-nums; }
+  input[type=range] { -webkit-appearance: none; appearance: none; padding: 0; height: 22px; background: transparent; border: 0; }
+  input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: rgba(79,216,255,.25); }
+  input[type=range]::-moz-range-track { height: 4px; border-radius: 2px; background: rgba(79,216,255,.25); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; margin-top: -6px; border-radius: 50%; background: var(--cyan); border: 0; box-shadow: 0 0 10px rgba(79,216,255,.7); }
+  input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; background: var(--cyan); border: 0; box-shadow: 0 0 10px rgba(79,216,255,.7); }
+  .quick { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 14px 0 10px; }
+  .quick .btn { font-size: 12.5px; padding: 7px 4px; }
+  .launch { display: flex; flex-wrap: wrap; gap: 6px; }
+  .launch .btn { font: 11.5px var(--mono); padding: 4px 10px; border-radius: 999px; color: var(--dim); }
+  .label { font: 10px var(--mono); letter-spacing: .18em; text-transform: uppercase; color: var(--dim); margin: 0 0 8px; }
+
+  /* ---------- notebook ---------- */
+  .nb { display: grid; grid-template-columns: minmax(170px, 250px) minmax(0, 1fr); flex: 1; min-height: 0; }
+  .nb-list { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  .nb-tools { display: flex; gap: 6px; padding: 10px; }
+  .nb-items { overflow: auto; flex: 1; padding: 0 6px 10px; }
+  .item { display: block; width: 100%; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 9px 10px; margin-bottom: 3px; }
+  .item:hover { background: rgba(79,216,255,.05); }
+  .item.sel { background: rgba(79,216,255,.1); border-color: var(--line); }
+  .item .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; gap: 6px; align-items: center; }
+  .item .p { color: var(--dim); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .item .d { color: var(--dim); font: 10px var(--mono); margin-top: 3px; letter-spacing: .04em; }
+  .tag { font: 9px var(--mono); letter-spacing: .12em; color: var(--amber); border: 1px solid rgba(255,179,71,.45); border-radius: 3px; padding: 0 4px; flex: none; }
+  .editor { display: flex; flex-direction: column; gap: 8px; padding: 12px; min-height: 0; min-width: 0; }
+  .editor input { font-weight: 600; font-size: 18px; }
+  .editor textarea { flex: 1; resize: none; line-height: 1.65; min-height: 140px; }
+  .ed-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font: 11px var(--mono); color: var(--dim); }
+  .ed-bar span { white-space: nowrap; }
+  .empty { margin: auto; text-align: center; color: var(--dim); max-width: 26ch; }
+
+  /* ---------- console ---------- */
+  .log { flex: 1; overflow: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+  .msg { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; padding: 9px 12px; border-radius: 8px; max-width: 94%; }
+  .msg.me { align-self: flex-end; background: rgba(255,179,71,.1); border: 1px solid rgba(255,179,71,.32); }
+  .msg.ai { align-self: flex-start; background: var(--panel-hi); border: 1px solid var(--line); font: 13px/1.55 var(--mono); }
+  .msg.bad { border-color: rgba(255,100,119,.55); }
+  .dots span { display: inline-block; width: 6px; height: 6px; margin-right: 4px; border-radius: 50%; background: var(--cyan); animation: dot 1.1s ease-in-out infinite; }
+  .dots span:nth-child(2) { animation-delay: .15s; } .dots span:nth-child(3) { animation-delay: .3s; }
+  @keyframes dot { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px 10px; }
+  .chips .btn { font: 11px var(--mono); padding: 4px 10px; border-radius: 999px; color: var(--dim); }
+  .btn.rec { border-color: #ff5d6c; color: #ff5d6c; animation: recpulse 1.1s ease-in-out infinite; }
+  .btn.on { background: rgba(79,216,255,.18); border-color: var(--cyan); color: var(--cyan); }
+  @keyframes recpulse { 50% { box-shadow: 0 0 14px rgba(255,93,108,.7); } }
+  .send { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--line); }
+
+  /* ---------- toast ---------- */
+  #toast { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translate(-50%, 20px); opacity: 0; pointer-events: none;
+           max-width: min(520px, calc(100vw - 32px)); background: var(--panel-hi); border: 1px solid var(--line-hi); border-radius: 8px; padding: 9px 14px;
+           font: 12.5px var(--mono); box-shadow: 0 8px 30px rgba(0,0,0,.5); transition: opacity .2s, transform .2s; z-index: 20; }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+  #toast.bad { border-color: rgba(255,100,119,.6); color: var(--bad); }
+
+  /* ---------- phone / narrow ---------- */
+  @media (max-width: 1100px) {
+    body { overflow: auto; height: auto; min-height: 100%; }
+    .clock { display: none; }
+    .tabs { display: flex; gap: 6px; padding: 10px max(14px, env(safe-area-inset-right, 0px)) 0 max(14px, env(safe-area-inset-left, 0px)); }
+    .tabs button { flex: 1; font: 12px var(--mono); letter-spacing: .12em; padding: 9px 4px; background: transparent; border: 1px solid var(--line); border-radius: 6px; color: var(--dim); }
+    .tabs button.on { border-color: var(--cyan); color: var(--cyan); background: rgba(79,216,255,.08); }
+    main { display: block; }
+    #col-left, #p-nb, #p-co { display: none; overflow: visible; }
+    #col-left.show { display: flex; }
+    .panel.show { display: flex; height: calc(100vh - 170px); min-height: 440px; }
+    .nb { grid-template-columns: 1fr; grid-template-rows: minmax(150px, 38%) 1fr; }
+    .nb-list { border-right: 0; border-bottom: 1px solid var(--line); }
+  }
+  @media (max-width: 420px) { .word { letter-spacing: .22em; font-size: 15px; } .wx-temp { font-size: 42px; } }
+  @media (prefers-reduced-motion: reduce) { .r1, .r2, .core, .dots span { animation: none; } #toast { transition: none; } }
+</style>
+</head>
+<body>
+<header>
+  <svg class="reactor" viewBox="0 0 40 40" aria-hidden="true"><circle class="r1" cx="20" cy="20" r="17"/><circle class="r2" cx="20" cy="20" r="11"/><circle class="core" cx="20" cy="20" r="4"/></svg>
+  <span class="word">J.A.R.V.I.S</span>
+  <span class="chip" id="mode"><span class="led off" id="led"></span><span id="mode-t">Connecting</span></span>
+  <span class="grow"></span>
+  <div class="clock"><b id="clock">--:--:--</b><span id="date"></span></div>
+</header>
+
+<nav class="tabs" id="tabs" aria-label="Sections">
+  <button data-p="col-left" class="on">HOME</button>
+  <button data-p="p-nb">NOTES</button>
+  <button data-p="p-co">CONSOLE</button>
+</nav>
+
+<main>
+  <div id="col-left">
+    <section class="panel" id="p-wx">
+      <h2>Weather</h2>
+      <div class="body">
+        <form class="wx-form" id="wx-form">
+          <input id="city" placeholder="City, e.g. Mumbai" aria-label="City" autocomplete="off">
+          <button class="btn primary" type="submit">Go</button>
+        </form>
+        <div id="wx"><p class="hint">Type a city to see the weather.</p></div>
+      </div>
+    </section>
+
+    <section class="panel" id="p-sys">
+      <h2>Machine <small id="disk"></small></h2>
+      <div class="body">
+        <div class="gauges">
+          <div class="gauge"><div class="ring" id="g-cpu"><b>--</b></div><span>CPU</span><em></em></div>
+          <div class="gauge"><div class="ring" id="g-mem"><b>--</b></div><span>Memory</span><em></em></div>
+          <div class="gauge"><div class="ring" id="g-bat"><b>--</b></div><span>Battery</span><em id="bat-note"></em></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" id="p-deck">
+      <h2>Deck</h2>
+      <div class="body">
+        <p class="label">Spotify</p>
+        <form class="row music-in" id="music">
+          <input id="song" placeholder="Song, playlist or Spotify link" aria-label="What to play" autocomplete="off">
+          <button class="btn primary" type="submit">Play</button>
+        </form>
+        <div class="transport">
+          <button class="btn" data-cmd="previous" aria-label="Previous track"><svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zM20 5v14L9.5 12z"/></svg></button>
+          <button class="btn main" data-cmd="pause" aria-label="Play or pause"><svg viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg></button>
+          <button class="btn" data-cmd="next" aria-label="Next track"><svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM4 5v14l10.5-7z"/></svg></button>
+        </div>
+        <label class="slider" for="vol">Volume <input type="range" id="vol" min="0" max="100" value="50"><output id="vol-o">--</output></label>
+        <label class="slider" for="bri">Light <input type="range" id="bri" min="0" max="100" value="60"><output id="bri-o">--</output></label>
+        <div class="quick">
+          <button class="btn" data-cmd="mute">Mute</button>
+          <button class="btn" data-cmd="unmute">Unmute</button>
+          <button class="btn" data-cmd="screenshot">Screenshot</button>
+          <button class="btn" data-cmd="lock screen">Lock</button>
+          <button class="btn" data-cmd="open notebook">Notebook</button>
+          <button class="btn" data-cmd="battery">Battery</button>
+        </div>
+        <p class="label">Open</p>
+        <div class="launch" id="launch"></div>
+      </div>
+    </section>
+  </div>
+
+  <section class="panel" id="p-nb">
+    <h2>Notebook <span class="grow"></span><span class="chip" id="count">0 notes</span></h2>
+    <div class="nb">
+      <div class="nb-list">
+        <div class="nb-tools">
+          <input id="q" placeholder="Search notes" aria-label="Search notes">
+          <button class="btn primary" id="new" title="New note">New</button>
+        </div>
+        <div class="nb-items" id="items"></div>
+      </div>
+      <div class="editor" id="editor"></div>
+    </div>
+  </section>
+
+  <section class="panel" id="p-co">
+    <h2>Console</h2>
+    <div class="log" id="log" aria-live="polite">
+      <div class="msg ai">Ready. Type a command or a question, or tap a shortcut below.</div>
+    </div>
+    <div class="chips" id="quick"></div>
+    <form class="send" id="chat">
+      <input id="msg" placeholder="Talk to Jarvis" aria-label="Message" autocomplete="off">
+      <button class="btn" type="button" id="mic" title="Speak a command" aria-label="Speak a command">🎤</button>
+      <button class="btn" type="button" id="wake" title="Hands-free: say “Jarvis …”" aria-label="Hands-free mode" aria-pressed="false">🎧</button>
+      <button class="btn" type="button" id="spk" title="Read answers aloud" aria-pressed="false">🔊</button>
+      <button class="btn primary" type="submit" id="go">Send</button>
+    </form>
+  </section>
+</main>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const store = {
+  get(k) { try { return sessionStorage.getItem(k) || localStorage.getItem(k); } catch (e) { return null; } },
+  setS(k, v) { try { sessionStorage.setItem(k, v); } catch (e) {} },
+  setL(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+};
+
+// ---- token & api -------------------------------------------------------
+const params = new URLSearchParams(location.search);
+let TOKEN = params.get("t") || store.get("jt") || "";
+if (params.get("t")) { store.setS("jt", TOKEN); try { history.replaceState(null, "", location.pathname); } catch (e) {} }
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { ...opts, headers: { "X-Jarvis-Token": TOKEN, "Content-Type": "application/json" },
+                                  body: opts.body ? JSON.stringify(opts.body) : undefined });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || ("Request failed (" + res.status + ")"));
+  return data;
+}
+
+let toastTimer = null;
+function toast(msg, bad) {
+  const t = $("toast"); t.textContent = msg; t.classList.toggle("bad", !!bad); t.classList.add("show");
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 3400);
+}
+// Run a command through Jarvis (same path as typing it) and show the answer as a toast.
+async function run(cmd) {
+  try { const r = await api("/api/chat", { method: "POST", body: { text: cmd } }); toast(r.reply || "Done.", r.reply.startsWith("Error:")); return r.reply; }
+  catch (e) { toast(e.message, true); return ""; }
+}
+
+// ---- header ------------------------------------------------------------
+function tick() {
+  const d = new Date();
+  $("clock").textContent = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  $("date").textContent = d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+}
+tick(); setInterval(tick, 1000);
+let defaultCity = "";
+api("/api/status").then((s) => {
+  $("mode-t").textContent = s.ai ? "AI online" : "Offline commands only";
+  $("led").classList.toggle("off", !s.ai);
+  defaultCity = s.default_city || "";
+  if (defaultCity && !$("city").value) { $("city").value = defaultCity; loadWeather(); }
+}).catch(() => { $("mode-t").textContent = "Link lost: reopen from the terminal"; });
+
+// ---- weather -----------------------------------------------------------
+function wxIcon(summary) {
+  const s = (summary || "").toLowerCase();
+  const cloud = '<path class="i-cloud" d="M14 36h22a8 8 0 0 0 0-16 11 11 0 0 0-21-2 9 9 0 0 0-1 18z"/>';
+  const cloudL = cloud.replace('class="i-cloud"', 'class="i-cloud light"');
+  const sun = '<circle class="i-sun" cx="24" cy="24" r="8"/>' + [0, 45, 90, 135, 180, 225, 270, 315].map((a) =>
+    '<line class="i-ray" x1="24" y1="9" x2="24" y2="13" transform="rotate(' + a + ' 24 24)"/>').join("");
+  let g;
+  if (/thunder/.test(s)) g = cloud + '<path class="i-bolt" d="M25 31l-6 9h5l-2 7 9-11h-5l3-5z"/>';
+  else if (/snow/.test(s)) g = cloud + '<circle class="i-snow" cx="17" cy="42" r="2"/><circle class="i-snow" cx="26" cy="44" r="2"/><circle class="i-snow" cx="35" cy="42" r="2"/>';
+  else if (/rain|drizzle|shower/.test(s)) g = cloud + '<line class="i-drop" x1="17" y1="40" x2="15" y2="46"/><line class="i-drop" x1="26" y1="40" x2="24" y2="46"/><line class="i-drop" x1="35" y1="40" x2="33" y2="46"/>';
+  else if (/fog/.test(s)) g = '<g stroke="#8fb0c4" stroke-width="3" stroke-linecap="round"><line x1="10" y1="18" x2="38" y2="18"/><line x1="8" y1="26" x2="40" y2="26"/><line x1="12" y1="34" x2="36" y2="34"/></g>';
+  else if (/partly|mostly clear/.test(s)) g = '<g transform="translate(-6 -8) scale(.8)">' + sun + '</g><g transform="translate(6 4) scale(.85)">' + cloudL + '</g>';
+  else if (/cloud|overcast/.test(s)) g = cloudL;
+  else g = sun;
+  return '<svg class="wx-icon" viewBox="0 0 48 48" aria-hidden="true">' + g + '</svg>';
+}
+async function loadWeather() {
+  const city = $("city").value.trim();
+  const box = $("wx"); box.replaceChildren(el("p", "hint", "Loading"));
+  try {
+    const w = await api("/api/weather?city=" + encodeURIComponent(city));
+    store.setL("city", city);
+    const out = el("div");
+    const main = el("div", "wx-main");
+    main.insertAdjacentHTML("beforeend", wxIcon(w.summary));   // icon markup is built from constants only
+    const txt = el("div");
+    const t = el("div", "wx-temp", String(Math.round(w.temp))); t.appendChild(el("small", null, "°C"));
+    txt.append(t, el("div", "wx-sum", w.summary), el("div", "wx-place", w.place));
+    main.appendChild(txt); out.appendChild(main);
+    const meta = el("div", "wx-meta");
+    [["Feels", Math.round(w.feels_like) + "°"], ["Humidity", w.humidity + "%"], ["Wind", Math.round(w.wind) + " km/h"]].forEach(([k, v]) => {
+      const d = el("div", null, k); d.prepend(el("b", null, v)); meta.appendChild(d);
+    });
+    out.appendChild(meta);
+    const strip = el("div", "days");
+    w.days.forEach((d, i) => {
+      const cell = el("div", "day");
+      const name = i === 0 ? "Today" : new Date(d.date + "T12:00:00").toLocaleDateString([], { weekday: "short" });
+      cell.append(el("b", null, name), el("i", null, Math.round(d.low) + "–" + Math.round(d.high) + "°"),
+                  el("span", null, d.summary), el("span", null, d.rain_chance != null ? "rain " + d.rain_chance + "%" : ""));
+      strip.appendChild(cell);
+    });
+    out.appendChild(strip);
+    box.replaceChildren(out);
+  } catch (e) { box.replaceChildren(el("p", "err", e.message)); }
+}
+$("wx-form").addEventListener("submit", (e) => { e.preventDefault(); loadWeather(); });
+{ const saved = store.get("city"); if (saved) { $("city").value = saved; loadWeather(); } }
+
+// ---- machine vitals ----------------------------------------------------
+function setRing(id, pct, color, label) {
+  const r = $(id); r.style.setProperty("--p", pct == null ? 0 : Math.max(0, Math.min(100, pct)));
+  r.style.setProperty("--c", color); r.firstChild.textContent = label;
+}
+const loadColor = (p) => p >= 90 ? "var(--bad)" : p >= 75 ? "var(--amber)" : "var(--cyan)";
+async function loadSystem() {
+  try {
+    const s = await api("/api/system");
+    setRing("g-cpu", s.cpu, loadColor(s.cpu), Math.round(s.cpu) + "%");
+    setRing("g-mem", s.mem, loadColor(s.mem), Math.round(s.mem) + "%");
+    if (s.battery) {
+      const p = s.battery.percent;
+      setRing("g-bat", p, s.battery.plugged ? "var(--ok)" : p <= 15 ? "var(--bad)" : p <= 30 ? "var(--amber)" : "var(--cyan)", Math.round(p) + "%");
+      $("bat-note").textContent = s.battery.plugged ? "charging" : "on battery";
+    } else { setRing("g-bat", 0, "var(--dim)", "n/a"); $("bat-note").textContent = "no battery"; }
+    $("disk").textContent = s.disk != null ? "disk " + Math.round(s.disk) + "% used" : "";
+  } catch (e) { /* keep the last readings */ }
+}
+loadSystem(); setInterval(() => { if (!document.hidden) loadSystem(); }, 4000);
+
+// ---- deck: music, sliders, quick actions --------------------------------
+$("music").addEventListener("submit", async (e) => {
+  e.preventDefault(); const v = $("song").value.trim(); if (!v) return;
+  const reply = await run("play " + v); if (!reply.startsWith("Error:")) $("song").value = "";
+});
+document.querySelectorAll("[data-cmd]").forEach((b) => b.addEventListener("click", () => run(b.dataset.cmd)));
+[["vol", "volume"], ["bri", "brightness"]].forEach(([id, word]) => {
+  const s = $(id), o = $(id + "-o");
+  s.addEventListener("input", () => { o.textContent = s.value + "%"; });
+  s.addEventListener("change", () => { o.textContent = s.value + "%"; run(word + " " + s.value); });
+});
+["Chrome", "Spotify", "Calculator", "Files", "Settings"].forEach((name) => {
+  const b = el("button", "btn", name.toLowerCase()); b.type = "button"; b.addEventListener("click", () => run("open " + name.toLowerCase())); $("launch").appendChild(b);
+});
+
+// ---- notebook ----------------------------------------------------------
+let notes = [], selected = null, saveTimer = null;
+const fmt = (iso) => { const d = new Date(iso); return d.toLocaleDateString([], { day: "numeric", month: "short" }) + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); };
+const clockTime = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const words = (t) => (t.trim() ? t.trim().split(/\s+/).length : 0);
+
+async function loadNotes(keep) {
+  try { notes = await api("/api/notes"); } catch (e) { notes = []; }
+  if (!keep || !notes.some((n) => n.id === selected)) selected = notes.length ? notes[0].id : null;
+  renderList(); renderEditor();
+}
+function renderList() {
+  const q = $("q").value.trim().toLowerCase();
+  const shown = notes.filter((n) => !q || n.title.toLowerCase().includes(q) || n.text.toLowerCase().includes(q));
+  $("count").textContent = notes.length + (notes.length === 1 ? " note" : " notes");
+  const box = $("items"); box.replaceChildren();
+  if (!shown.length) box.appendChild(el("p", "hint", notes.length ? "No notes match." : "No notes yet. Press New, or tell Jarvis “note buy milk”."));
+  shown.forEach((n) => {
+    const b = el("button", "item" + (n.id === selected ? " sel" : ""));
+    const t = el("div", "t"); if (n.pinned) t.appendChild(el("span", "tag", "PIN")); t.appendChild(el("span", null, n.title));
+    b.append(t, el("div", "p", n.text.replace(/\s+/g, " ")), el("div", "d", fmt(n.updated)));
+    b.addEventListener("click", () => { selected = n.id; renderList(); renderEditor(); });
+    box.appendChild(b);
+  });
+}
+function renderEditor() {
+  const ed = $("editor"); ed.replaceChildren();
+  const n = notes.find((x) => x.id === selected);
+  if (!n) { ed.appendChild(el("div", "empty", "Select a note, or press New to start one.")); return; }
+  const title = el("input"); title.value = n.title; title.setAttribute("aria-label", "Note title");
+  const text = el("textarea"); text.value = n.text; text.setAttribute("aria-label", "Note text");
+  const status = el("span", null, "saved " + clockTime(n.updated));
+  const count = el("span", null, words(n.text) + " words");
+  const pin = el("button", "btn", n.pinned ? "Unpin" : "Pin");
+  const del = el("button", "btn danger", "Delete");
+  const bar = el("div", "ed-bar"); bar.append(status, el("span", "grow"), count, pin, del);
+  ed.append(title, text, bar);
+  const change = () => {
+    status.textContent = "saving"; count.textContent = words(text.value) + " words"; clearTimeout(saveTimer);
+    saveTimer = setTimeout(async () => {
+      try { const u = await api("/api/notes/" + n.id, { method: "PUT", body: { title: title.value, text: text.value } });
+            Object.assign(n, u); status.textContent = "saved " + clockTime(u.updated); renderListQuiet(); }
+      catch (e) { status.textContent = "save failed: " + e.message; }
+    }, 600);
+  };
+  title.addEventListener("input", change); text.addEventListener("input", change);
+  pin.addEventListener("click", async () => { try { const u = await api("/api/notes/" + n.id, { method: "PUT", body: { pinned: !n.pinned } }); Object.assign(n, u); await loadNotes(true); } catch (e) { toast(e.message, true); } });
+  let armed = null;   // two-step delete, built into the page instead of a browser dialog
+  del.addEventListener("click", async () => {
+    if (!armed) { del.textContent = "Really delete?"; del.classList.add("armed"); armed = setTimeout(() => { armed = null; del.textContent = "Delete"; del.classList.remove("armed"); }, 3000); return; }
+    clearTimeout(armed); clearTimeout(saveTimer);
+    try { await api("/api/notes/" + n.id, { method: "DELETE" }); await loadNotes(false); toast("Note deleted."); } catch (e) { toast(e.message, true); }
+  });
+}
+function renderListQuiet() { const y = $("items").scrollTop; renderList(); $("items").scrollTop = y; }
+$("q").addEventListener("input", renderList);
+$("new").addEventListener("click", async () => {
+  try { const n = await api("/api/notes", { method: "POST", body: { title: "Untitled", text: "New note" } });
+        selected = n.id; await loadNotes(true); const t = document.querySelector("#editor textarea"); if (t) { t.focus(); t.select(); } showPanel("p-nb"); }
+  catch (e) { toast(e.message, true); }
+});
+
+// ---- console -----------------------------------------------------------
+const QUICK = ["weather", "what time is it", "list notes", "note ", "play ", "who is the president of india"];
+QUICK.forEach((c) => { const b = el("button", "btn", c.trim()); b.type = "button";
+  b.addEventListener("click", () => { $("msg").value = c; $("msg").focus(); if (!c.endsWith(" ")) $("chat").requestSubmit(); }); $("quick").appendChild(b); });
+const history_ = []; let hIdx = 0;
+$("msg").addEventListener("keydown", (e) => {
+  if (e.key === "ArrowUp" && history_.length) { hIdx = Math.max(0, hIdx - 1); $("msg").value = history_[hIdx]; e.preventDefault(); }
+  if (e.key === "ArrowDown" && history_.length) { hIdx = Math.min(history_.length, hIdx + 1); $("msg").value = history_[hIdx] || ""; e.preventDefault(); }
+});
+function addMsg(text, who, bad) { const m = el("div", "msg " + who + (bad ? " bad" : ""), text); $("log").appendChild(m); $("log").scrollTop = $("log").scrollHeight; return m; }
+$("chat").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = $("msg").value.trim(); if (!text) return;
+  history_.push(text); hIdx = history_.length;
+  $("msg").value = ""; addMsg(text, "me"); $("go").disabled = true;
+  const wait = el("div", "msg ai"); const dots = el("div", "dots"); dots.append(el("span"), el("span"), el("span"));
+  const clock = el("span", "hint", ""); dots.appendChild(clock); wait.appendChild(dots);
+  $("log").appendChild(wait); $("log").scrollTop = $("log").scrollHeight;
+  const started = Date.now();
+  const timer = setInterval(() => {
+    const s = Math.round((Date.now() - started) / 1000);
+    clock.textContent = s < 1 ? "" : " Thinking " + s + "s" + (s >= 12 ? " · Google may be busy, still trying" : "");
+  }, 500);
+  try {
+    const r = await api("/api/chat", { method: "POST", body: { text } });
+    wait.textContent = r.reply || "(done)"; if (r.reply.startsWith("Error:")) wait.classList.add("bad");
+    else if (window.jarvisSpeak) window.jarvisSpeak(r.reply);
+    if (/^(Saved note|Note deleted)/.test(r.reply)) loadNotes(true);
+  } catch (err) { wait.textContent = "Error: " + err.message; wait.classList.add("bad"); }
+  clearInterval(timer);
+  $("go").disabled = false; $("log").scrollTop = $("log").scrollHeight; $("msg").focus();
+});
+
+
+// ---- voice (free, built into Chrome / Edge: no install, no key) -----------
+(function voice() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const mic = $("mic"), wake = $("wake"), spk = $("spk");
+  const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+                  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
+  let speakOn = store.get("jv-speak") === "1", handsFree = false, rec = null, listening = false, speaking = false;
+  spk.classList.toggle("on", speakOn); spk.setAttribute("aria-pressed", speakOn);
+  window.jarvisSpeak = (text) => {
+    if (!speakOn || !window.speechSynthesis || !text) return;
+    const clean = String(text).replace(/\[[0-9a-f]{6,}\]/g, "").replace(/https?:\/\/\S+/g, "link").replace(/\s+/g, " ").slice(0, 400);
+    speechSynthesis.cancel();
+    try {
+      const u = new SpeechSynthesisUtterance(clean); u.lang = "en-IN"; speaking = true;
+      u.onend = u.onerror = () => { speaking = false; if (handsFree) start(); };
+      if (rec && listening) { try { rec.stop(); } catch (e) {} }
+      speechSynthesis.speak(u);
+    } catch (e) { speaking = false; }   // speech is a bonus: never let it break a reply
+  };
+  spk.addEventListener("click", () => {
+    speakOn = !speakOn; store.set("jv-speak", speakOn ? "1" : "0");
+    spk.classList.toggle("on", speakOn); spk.setAttribute("aria-pressed", speakOn);
+    if (!speakOn && window.speechSynthesis) speechSynthesis.cancel();
+    toast(speakOn ? "Jarvis will read answers aloud." : "Spoken answers off.");
+  });
+  if (!SR) {
+    const no = () => toast("This browser has no speech recognition. Open the Jarvis link in Microsoft Edge or Google Chrome.", true);
+    mic.addEventListener("click", no); wake.addEventListener("click", no);
+    return;
+  }
+  function make() {
+    const r = new SR(); r.lang = "en-IN"; r.interimResults = true; r.continuous = false;
+    r.onstart = () => { listening = true; mic.classList.add("rec"); if (!handsFree) toast("Listening… speak now."); };
+    r.onend = () => { listening = false; mic.classList.remove("rec"); if (handsFree && !speaking) setTimeout(start, 250); };
+    r.onerror = (e) => {
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") { handsFree = false; wake.classList.remove("on"); toast("Microphone blocked. Click the lock icon in the address bar and allow the microphone.", true); }
+      else if (e.error === "network") { handsFree = false; wake.classList.remove("on"); toast("Voice needs Chrome or Edge with internet. This browser can't reach its speech service.", true); }
+      else if (e.error === "audio-capture") toast("No microphone found. Check Windows Settings > System > Sound > Input.", true);
+      else if (e.error === "no-speech" && !handsFree) toast("I didn't hear anything. Check that the right microphone is selected in Windows Sound settings.", true);
+      else if (e.error === "language-not-supported") toast("Speech language not supported in this browser.", true);
+    };
+    r.onresult = (ev) => {
+      let text = "", final = false;
+      for (const res of ev.results) { text += res[0].transcript; final = final || res.isFinal; }
+      text = text.trim();
+      if (handsFree) {
+        if (!final) return;
+        const m = text.match(/^(?:hey |ok |okay )?jarvis[,.!]?\s*(.*)$/i);
+        if (!m || !m[1]) return;           // ignore anything not addressed to Jarvis
+        text = m[1];
+      } else { $("msg").value = text; if (!final) return; }
+      $("msg").value = text; $("chat").requestSubmit();
+    };
+    return r;
+  }
+  function start() { if (listening || speaking) return; try { rec = rec || make(); rec.start(); } catch (e) {} }
+  mic.addEventListener("click", () => {
+    if (listening) { try { rec.stop(); } catch (e) {} return; }
+    if (window.speechSynthesis) speechSynthesis.cancel();
+    handsFree = false; wake.classList.remove("on"); start();
+  });
+  wake.addEventListener("click", () => {
+    handsFree = !handsFree; wake.classList.toggle("on", handsFree); wake.setAttribute("aria-pressed", handsFree);
+    if (handsFree) { toast("Hands-free on. Say “Jarvis, …” then your command."); start(); }
+    else { try { rec && rec.stop(); } catch (e) {} toast("Hands-free off."); }
+  });
+})();
+
+// ---- phone tabs --------------------------------------------------------
+function showPanel(id) {
+  if (innerWidth > 1100) return;
+  ["col-left", "p-nb", "p-co"].forEach((p) => $(p).classList.toggle("show", p === id));
+  document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.p === id));
+}
+document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("click", () => showPanel(b.dataset.p)));
+showPanel("col-left");
+loadNotes(false);
+</script>
+</body>
+</html>
